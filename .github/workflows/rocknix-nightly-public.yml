@@ -31,7 +31,6 @@ permissions:
 
 env:
   # 把这两项改成你的私有源码仓库坐标
-  PRIVATE_OWNER: AveyondFly
   PRIVATE_REPO: rocknix_img_build
   PRIVATE_PATH: private-src          # 私有源码 checkout 的目录名
 
@@ -204,7 +203,7 @@ jobs:
       - name: 🔒 检出私有源码仓库（只读）
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.PRIVATE_OWNER }}/${{ env.PRIVATE_REPO }}
+          repository: ${{ github.actor }}/${{ env.PRIVATE_REPO }}
           token: ${{ secrets.GH_PAT }}   # ← public 仓库里配置的只读 PAT
           path: ${{ env.PRIVATE_PATH }}
           fetch-depth: 1

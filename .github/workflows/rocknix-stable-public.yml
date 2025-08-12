@@ -29,7 +29,6 @@ permissions:
   contents: write   # 需要在 public 仓库创建/更新 Release 资产
 
 env:
-  PRIVATE_OWNER: AveyondFly
   PRIVATE_REPO: rocknix_img_build
   PRIVATE_PATH: private-src
 
@@ -197,7 +196,7 @@ jobs:
       - name: 🔒 检出私有源码仓库（只读）
         uses: actions/checkout@v4
         with:
-          repository: ${{ env.PRIVATE_OWNER }}/${{ env.PRIVATE_REPO }}
+          repository: ${{ github.actor }}/${{ env.PRIVATE_REPO }}
           token: ${{ secrets.GH_PAT }}   # Fine-grained PAT：仅 Contents: Read
           path: ${{ env.PRIVATE_PATH }}
           fetch-depth: 1

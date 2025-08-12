@@ -58,7 +58,7 @@ jobs:
       - name: Checkout private repo
         uses: actions/checkout@v4
         with:
-          repository: lcdyk0517/ee_img_build
+          repository: ${{ github.actor }}/ee_img_build
           token: ${{ secrets.GH_PAT }}
           path: private
           fetch-depth: 0
