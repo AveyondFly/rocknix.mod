@@ -31,7 +31,7 @@ permissions:
 
 env:
   # 把这两项改成你的私有源码仓库坐标
-  PRIVATE_OWNER: lcdyk0517
+  PRIVATE_OWNER: AveyondFly
   PRIVATE_REPO: rocknix_img_build
   PRIVATE_PATH: private-src          # 私有源码 checkout 的目录名
 
