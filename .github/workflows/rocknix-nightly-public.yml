@@ -19,8 +19,8 @@ on:
         description: "自定义百度云上传路径（结尾不要加斜杠）"
         required: false
         default: "/rocknix/自动构建/nightly"
-  # schedule:
-  #   - cron: "0 0 * * *"
+  schedule:
+    - cron: "0 0 * * *"
   create:
     tags:
       - "nightly-*"

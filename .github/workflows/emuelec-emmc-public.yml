@@ -1,0 +1,288 @@
+name: 稀范科技Emuelec线刷包魔改
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_url:
+        description: "镜像下载地址（必须输入，支持 .img / .img.gz）"
+        required: true
+        type: string
+      baidu_dir:
+        description: "百度网盘上传目录（作为当天子目录的父路径）"
+        required: false
+        default: "/Emuelec/魔改构建"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  # 统一生成 Release（只跑一次）
+  release:
+    runs-on: ubuntu-22.04
+    outputs:
+      tag:  ${{ steps.rel.outputs.tag }}
+      name: ${{ steps.rel.outputs.name }}
+    steps:
+      - name: Compute release tag/name
+        id: rel
+        run: |
+          set -euo pipefail
+          TS=$(date -u +"%Y%m%d-%H%M%S")
+          echo "tag=emmc-build-${TS}"  >> "$GITHUB_OUTPUT"
+          echo "name=emmc-build-${TS}" >> "$GITHUB_OUTPUT"
+
+      - name: Create/Update Release in CURRENT repo
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name:  ${{ steps.rel.outputs.tag }}
+          name:      ${{ steps.rel.outputs.name }}
+          token:     ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # 并行构建 3326 / 3326_en，并上传到 Release
+  build:
+    needs: release
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        device: ["3326", "3326_en"]
+      fail-fast: false
+    env:
+      GH_PAT: ${{ secrets.GH_PAT }}
+    steps:
+      - name: Checkout current repo
+        uses: actions/checkout@v4
+
+      - name: Checkout private repo
+        uses: actions/checkout@v4
+        with:
+          repository: lcdyk0517/ee_img_build
+          token: ${{ secrets.GH_PAT }}
+          path: private
+          fetch-depth: 0
+
+      - name: Install dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            jq curl wget xz-utils gzip tar coreutils \
+            gdisk parted e2fsprogs xfsprogs dosfstools util-linux \
+            kpartx squashfs-tools unzip p7zip-full
+
+      - name: Prepare image
+        id: prep
+        working-directory: private
+        run: |
+          set -euo pipefail
+          IMAGE_URL='${{ inputs.image_url }}'
+
+          echo "📥 Downloading: $IMAGE_URL"
+          fname=$(basename "$IMAGE_URL")
+          wget --show-progress --progress=bar:force:noscroll -O "$fname" "$IMAGE_URL"
+
+          if [[ "$fname" == *.img.gz ]]; then
+            echo "🗜️ Detected .img.gz — gunzip…"
+            gunzip -f "$fname"
+            IMG_FILE="${fname%.gz}"
+          elif [[ "$fname" == *.img ]]; then
+            IMG_FILE="$fname"
+          else
+            echo "❌ Unsupported file type: $fname" >&2
+            exit 1
+          fi
+
+          sz=$(stat -c%s "$IMG_FILE")
+          if (( sz < 100*1024*1024 )); then
+            echo "❌ $IMG_FILE 太小，疑似下载不完整（${sz} bytes）" >&2
+            exit 1
+          fi
+
+          echo "img=$IMG_FILE" >> "$GITHUB_OUTPUT"
+          echo "✅ Image ready: $IMG_FILE ($sz bytes)"
+
+      - name: Make emmc.sh executable
+        working-directory: private
+        run: chmod +x ./emmc.sh
+
+      - name: Run emmc.sh (DEVICE=${{ matrix.device }})
+        working-directory: private
+        env:
+          GH_PAT: ${{ env.GH_PAT }}
+        run: |
+          set -euo pipefail
+          echo "▶️ sudo -E ./emmc.sh '${{ matrix.device }}' '${{ steps.prep.outputs.img }}'"
+          sudo -E ./emmc.sh "${{ matrix.device }}" "${{ steps.prep.outputs.img }}"
+
+      - name: Locate build outputs (-mod image)
+        id: find
+        working-directory: private
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(ls -1t *-mod.img *-mod.img.gz 2>/dev/null || true)
+          if (( ${#FILES[@]} == 0 )); then
+            echo "❌ No mod image produced" >&2
+            ls -al
+            exit 1
+          fi
+          echo "files=${FILES[*]}" >> "$GITHUB_OUTPUT"
+          echo "PRIMARY_FILE=${FILES[0]}" >> "$GITHUB_ENV"
+          echo "PRIMARY_PATH=$PWD/${FILES[0]}" >> "$GITHUB_ENV"
+          echo "✅ Found outputs: ${FILES[*]}"
+
+      - name: 🪓 Split (7z, no compression) if >2GB, and upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          export GH_TOKEN="${GH_TOKEN}"
+          tag='${{ needs.release.outputs.tag }}'
+          f='${{ env.PRIMARY_PATH }}'
+
+          limit=$((2*1024*1024*1024))
+          size=$(stat -c%s "$f" || echo 0)
+          echo "Release tag: $tag"
+          echo "Asset: $f (size=$size)"
+
+          if (( size > limit )); then
+            echo "📦 分卷 1.9GB/卷（无压缩）..."
+            7z a -v1900m -mx=0 "${f}.7z" "$f"
+            shopt -s nullglob
+            for part in "${f}.7z".*; do
+              echo "⬆️ 上传：$part"
+              gh release upload "$tag" "$part" --clobber
+              rm -f "$part"
+            done
+            shopt -u nullglob
+          else
+            echo "⬆️ 上传单文件：$f"
+            gh release upload "$tag" "$f" --clobber
+          fi
+
+      - name: 🧹 Cleanup workspace (free disk space)
+        run: |
+          set -euo pipefail
+          echo "📏 磁盘使用（清理前）："; df -h
+          rm -f *.7z *.7z.* *.zip *.xz *.gz *.tgz 2>/dev/null || true
+          rm -f *.img *.img.gz 2>/dev/null || true
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          echo "📏 磁盘使用（清理后）："; df -h
+
+  # 百度云上传 —— 从 Release 串行下载/解压/上传/删除
+  upload_baidu:
+    needs: [release, build]
+    runs-on: ubuntu-22.04
+    concurrency:
+      group: baidu-upload
+      cancel-in-progress: false
+    env:
+      BAIDU_COOKIE: ${{ secrets.BAIDU_COOKIE }}
+    steps:
+      - name: Install dependencies (gh/7z/unzip)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gh p7zip-full unzip
+
+      - name: Install BaiduPCS-Go
+        run: |
+          set -euo pipefail
+          if [[ -z "${BAIDU_COOKIE:-}" ]]; then
+            echo "❌ Missing BAIDU_COOKIE secret" >&2
+            exit 1
+          fi
+          BVER="v3.9.0"
+          echo "⬇️ Installing BaiduPCS-Go ${BVER}…"
+          curl -L -o /tmp/bpcs.zip "https://github.com/qjfoidnh/BaiduPCS-Go/releases/download/${BVER}/BaiduPCS-Go-${BVER}-linux-amd64.zip"
+          unzip -o /tmp/bpcs.zip -d /tmp/bpcs
+          BAIDU_BIN="$(find /tmp/bpcs -type f -name 'BaiduPCS-Go' | head -n1)"
+          chmod +x "${BAIDU_BIN}"
+          install "${BAIDU_BIN}" /usr/local/bin/BaiduPCS-Go
+          BaiduPCS-Go -v || true
+          BaiduPCS-Go login -cookies="${BAIDU_COOKIE}"
+
+      - name: ☁️ 逐个下载分卷→解压→上传→删除
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          export GH_TOKEN="${GITHUB_TOKEN}"
+
+          tag="${{ needs.release.outputs.tag }}"
+          base_path="${{ inputs.baidu_dir }}"
+          today=$(date +%Y%m%d)
+          remote_dir="${base_path}/${today}"
+
+          echo "📁 确保远程目录存在：$remote_dir"
+          BaiduPCS-Go mkdir "$remote_dir" || echo "⚠️ 目录可能已存在"
+
+          echo "📥 拉取当前 Release 资源清单（来自本仓库）..."
+          names=$(gh release view -R "$GITHUB_REPOSITORY" "$tag" --json assets -q '.assets[].name')
+
+          # 将分卷统一为同一个 key（去掉 .7z.* 尾巴），单文件保持原名
+          mapfile -t keys < <(echo "$names" | awk '
+            { name=$0; if (name ~ /\.7z\./) sub(/\.7z\..*$/, "", name); print name }
+          ' | sort -u)
+
+          echo "🧾 本次需要处理的镜像："
+          printf '%s\n' "${keys[@]}"
+
+          for key in "${keys[@]}"; do
+            echo "=============================="
+            echo "▶ 处理：$key"
+            if [[ "$key" == *mini* ]]; then
+              echo "⏭️ 跳过 mini 镜像：$key"
+              continue
+            fi
+
+            workdir="$(mktemp -d)"
+            echo "📂 临时目录：$workdir"
+
+            # 优先尝试分卷下载与解压
+            if gh release download -R "$GITHUB_REPOSITORY" "$tag" --pattern "${key}.7z.*" --clobber -D "$workdir"; then
+              echo "📦 已下载分卷，开始解压合并..."
+              first_part=$(ls "$workdir/${key}.7z".001 2>/dev/null | head -n1 || true)
+              if [ -z "${first_part:-}" ]; then
+                first_part=$(ls "$workdir/${key}.7z".0* 2>/dev/null | sort | head -n1 || true)
+              fi
+              if [ -z "${first_part:-}" ]; then
+                echo "❌ 未找到分卷起始文件，放弃该镜像"
+                rm -rf "$workdir"
+                continue
+              fi
+              7z x "$first_part" -aoa -o"$workdir"
+            else
+              echo "ℹ️ 未找到分卷，尝试下载单文件：$key"
+              gh release download -R "$GITHUB_REPOSITORY" "$tag" --pattern "$key" --clobber -D "$workdir"
+            fi
+
+            # 解压后可能位于子目录，使用 find 兜底定位
+            if [ -f "$workdir/$key" ]; then
+              found_file="$workdir/$key"
+            else
+              found_file="$(find "$workdir" -type f -name "$key" -print -quit || true)"
+              if [ -z "$found_file" ]; then
+                echo "❌ 未找到解压后的文件：$key（可能被存进了子目录）"
+                echo "📂 workdir 树："; find "$workdir" -maxdepth 3 -print
+                rm -rf "$workdir"
+                continue
+              fi
+            fi
+
+            echo "⏫ 上传到百度云：$remote_dir/$key"
+            BaiduPCS-Go upload "$found_file" "$remote_dir"
+
+            echo "🗑️ 上传完成，删除本地临时文件"
+            rm -rf "$workdir"
+            echo "✅ 完成：$key"
+          done
+
+          echo "🎯 全部镜像处理完成（逐个上传并删除）"
+
+      - name: 🧹 Cleanup
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/bpcs 2>/dev/null || true
