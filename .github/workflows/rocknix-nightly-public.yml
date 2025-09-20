@@ -273,9 +273,9 @@ jobs:
 
       - name: 🔐 安装并登录 BaiduPCS-Go
         run: |
-          curl -Lo pcs.zip https://github.com/qjfoidnh/BaiduPCS-Go/releases/download/v3.9.7/BaiduPCS-Go-v3.9.7-linux-amd64.zip
+          curl -Lo pcs.zip https://github.com/qjfoidnh/BaiduPCS-Go/releases/download/v3.9.9/BaiduPCS-Go-v3.9.9-linux-amd64.zip
           unzip pcs.zip
-          mv BaiduPCS-Go-v3.9.7-linux-amd64/BaiduPCS-Go .
+          mv BaiduPCS-Go-v3.9.9-linux-amd64/BaiduPCS-Go .
           chmod +x BaiduPCS-Go
           sudo mv BaiduPCS-Go /usr/local/bin/
           BaiduPCS-Go login -cookies="${{ secrets.BAIDU_COOKIE }}"
