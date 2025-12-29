@@ -162,7 +162,7 @@ jobs:
           if [ -n "${{ github.event.inputs.selected_archs }}" ]; then
             IFS=',' read -ra base <<< "${{ github.event.inputs.selected_archs }}"
           else
-            base=("3566" "x55" "3326" "h700" "3326-emmc" "sm8250")
+            base=("3566" "n55" "3326" "h700" "3326-emmc" "sm8250")
           fi
           result="["; for arch in "${base[@]}"; do result+="\"$arch\","; done
           result="${result%,}]"
