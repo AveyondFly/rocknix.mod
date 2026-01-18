@@ -221,7 +221,7 @@ jobs:
         run: |
           cd "${PRIVATE_PATH}"
           chmod +x ./build_mod_img.sh
-          sudo GH_PAT="${GH_PAT}" ./build_mod_img.sh ${{ matrix.arch }}
+          sudo GH_PAT="${GH_PAT}" ./build_mod_img.sh ${{ matrix.arch }} nightly-20250712
           # 假定脚本生成的 *.img.gz 在当前目录；如在别处，请同步调整下方上传路径
           ls -lh *.img.gz || true
 
